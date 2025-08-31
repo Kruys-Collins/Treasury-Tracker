@@ -1,0 +1,17 @@
+.env
+/
+ # Ignore virtual environment
+
+Treasury/
+
+# VS Code settings
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+#ignore environment variable files
