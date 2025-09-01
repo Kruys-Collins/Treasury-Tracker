@@ -89,33 +89,20 @@ else:
         st.dataframe(df, use_container_width=True)
 
         # --- Pie Chart: Companies vs Rest ---
-        if "pct_supply" in df.columns:
+        if "pct_supply" in df.columns and df["pct_supply"].sum() > 0:
             st.markdown("### 🥧 Companies vs Rest of Supply")
             companies_pct = df["pct_supply"].sum()
-            rest_pct = 100 - companies_pct
+            rest_pct = max(0, 100 - companies_pct)
             pie_df = pd.DataFrame({
                 "Category": ["Companies", "Rest of Supply"],
                 "Share": [companies_pct, rest_pct]
             })
-            fig1 = px.pie(pie_df, names="Category", values="Share", color="Category")
+            fig1 = px.pie(pie_df, names="Category", values="Share", color="Category",
+                          color_discrete_map={"Companies": "blue", "Rest of Supply": "gray"})
             st.plotly_chart(fig1, use_container_width=True)
 
-        # --- Pie Chart: Individual Companies ---
-        st.markdown("### 🥧 Individual Companies vs Rest")
-        if "pct_supply" in df.columns:
-            pie_df2 = df[["name", "pct_supply"]].copy()
-            others_share = 100 - pie_df2["pct_supply"].sum()
-            pie_df2 = pd.concat([pie_df2, pd.DataFrame([{"name": "Others", "pct_supply": others_share}])])
-            fig2 = px.pie(pie_df2, names="name", values="pct_supply")
-            st.plotly_chart(fig2, use_container_width=True)
-
-        # --- Bar Chart: Top Holders ---
-        if "coins" in df.columns:
-            st.markdown("### 📊 Top 10 Holders (by coins)")
-            st.bar_chart(df.sort_values("coins", ascending=False).set_index("name")["coins"].head(10))
-
-        # --- Line Chart: Historical Accumulation ---
-        st.markdown("### 📈 Historical Accumulation")
+        # --- Line Chart: Historical Accumulation (Yearly) ---
+        st.markdown("### 📈 Yearly Accumulation")
         history = pd.DataFrame()
         for snap in latests:
             snap_df = snap["data"].copy()
@@ -124,9 +111,9 @@ else:
 
         if not history.empty:
             history["timestamp"] = pd.to_datetime(history["timestamp"])
-            weekly = history.groupby([pd.Grouper(key="timestamp", freq="W"), "name"])["coins"].sum().reset_index()
-            fig3 = px.line(weekly, x="timestamp", y="coins", color="name", title="Weekly Accumulation")
-            st.plotly_chart(fig3, use_container_width=True)
+            yearly = history.groupby([pd.Grouper(key="timestamp", freq="Y"), "name"])["coins"].sum().reset_index()
+            fig2 = px.line(yearly, x="timestamp", y="coins", color="name", title="Yearly Accumulation")
+            st.plotly_chart(fig2, use_container_width=True)
 
 # --- Custom CSS ---
 st.markdown(
