@@ -1,126 +1,109 @@
-import os
-from datetime import datetime
-import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
-import joblib
-from pathlib import Path
+import pandas as pd
 import plotly.express as px
+from datetime import datetime, timezone
+from dateutil import parser, relativedelta
 
-# Load environment variables
-load_dotenv()
+# =============================
+# Load data (replace with your real source)
+# =============================
+# Example DataFrame
+data = {
+    "name": ["Strategy", "MARA Holdings", "XXI", "Bitcoin Standard Treasury Company", "Bullish"],
+    "symbol": ["MSTR.US", "MARA.US", "CEP.US", "CEPO.US", "BLSH.US"],
+    "country": ["US", "US", "US", "US", "US"],
+    "total_holdings": [632457, 50639, 43514, 30021, 24000],
+    "total_entry_value_usd": [46502665839, 0, 0, 0, 0],
+    "total_current_value_usd": [68570008266.73, 5490201940.39, 4717720476.99, 3254830317.60, 2602042824.10],
+}
+df = pd.DataFrame(data)
 
-DATA_DIR = Path("data")
-SNAP_PATH = DATA_DIR / "treasury_snapshots.pkl"
+# Ensure numeric columns
+df["total_holdings"] = pd.to_numeric(df["total_holdings"], errors="coerce").fillna(0)
+df["total_entry_value_usd"] = pd.to_numeric(df["total_entry_value_usd"], errors="coerce").fillna(0)
+df["total_current_value_usd"] = pd.to_numeric(df["total_current_value_usd"], errors="coerce").fillna(0)
 
-# Streamlit config
-st.set_page_config(page_title="Treasury Tracker", layout="wide")
-st.title("📊 Public Companies Crypto Treasury Tracker (Demo)")
+# =============================
+# Streamlit Page Config
+# =============================
+st.set_page_config(page_title="Crypto Treasury Tracker", layout="wide")
 
-# Sidebar
-coin = st.sidebar.selectbox("Coin", ["bitcoin", "ethereum"])
-fiat = st.sidebar.selectbox("Display currency", ["usd", "eur", "jpy", "gbp", "ngn"])
-assumed_cost = st.sidebar.number_input(
-    "Assumed cost per coin (USD)", min_value=0.0, value=0.0
-)
-fetch_now = st.sidebar.button("Fetch latest now")
-
-# --- Helper functions ---
-def load_snapshots():
-    if SNAP_PATH.exists():
-        return joblib.load(SNAP_PATH)
-    return []
-
-def save_snapshot(df, coin):
-    DATA_DIR.mkdir(exist_ok=True)
-    rec = {"timestamp": datetime.utcnow().isoformat() + "Z", "coin": coin, "data": df}
-    snaps = load_snapshots()
-    snaps.append(rec)
-    joblib.dump(snaps, SNAP_PATH)
-
-# --- Fetch new snapshot if requested ---
-if fetch_now:
-    st.info("Fetch requested — make sure COINGECKO_API_KEY is set in .env")
-    try:
-        from src.api import CoinGeckoClient
-        from src.transform import normalize_companies_payload, add_values_fx, compute_pnl
-
-        cg = CoinGeckoClient()
-        payload = cg.get_companies_treasury(coin)
-        price_resp = cg.get_simple_price([coin], ["usd"])
-        price_usd = price_resp.get(coin, {}).get("usd", 0.0)
-
-        df = normalize_companies_payload(payload)
-        df = add_values_fx(df, coin_price_usd=price_usd, fiat_rates={"usd": 1.0}, fiat="usd")
-        df = compute_pnl(df, assumed_cost_per_coin_usd=(assumed_cost if assumed_cost > 0 else None))
-
-        save_snapshot(df, coin)
-        st.success("Fetched and saved snapshot ✅")
-    except Exception as e:
-        st.error(f"Failed to fetch: {e}")
-
-# --- Load latest snapshot ---
-snaps = load_snapshots()
-if not snaps:
-    st.info("No snapshots yet. Use Fetch Latest Now to create one.")
-else:
-    latests = [s for s in snaps if s["coin"] == coin]
-    if not latests:
-        st.info("No snapshots for selected coin yet.")
-    else:
-        latest = latests[-1]
-        df = latest["data"]
-
-        st.subheader(f"Latest snapshot for {coin} @ {latest['timestamp']}")
-
-        # --- KPI Cards ---
-        total_coins = df["coins"].sum()
-        total_value = df["value_usd"].sum()
-        pct_supply = df.get("pct_supply", pd.Series([0])).sum()
-        total_pnl = df.get("pnl_usd", pd.Series([0])).sum()
-
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("Total Coins Held", f"{total_coins:,.0f}")
-        kpi2.metric("Total Value (USD)", f"${total_value:,.0f}")
-        kpi3.metric("% of Supply", f"{pct_supply:.2f}%")
-        kpi4.metric("Total PnL (USD)", f"${total_pnl:,.0f}")
-
-        # --- Dataframe display ---
-        st.dataframe(df, use_container_width=True)
-
-        # --- Pie Chart: Companies vs Rest ---
-        if "pct_supply" in df.columns and df["pct_supply"].sum() > 0:
-            st.markdown("### 🥧 Companies vs Rest of Supply")
-            companies_pct = df["pct_supply"].sum()
-            rest_pct = max(0, 100 - companies_pct)
-            pie_df = pd.DataFrame({
-                "Category": ["Companies", "Rest of Supply"],
-                "Share": [companies_pct, rest_pct]
-            })
-            fig1 = px.pie(pie_df, names="Category", values="Share", color="Category",
-                          color_discrete_map={"Companies": "blue", "Rest of Supply": "gray"})
-            st.plotly_chart(fig1, use_container_width=True)
-
-        # --- Line Chart: Historical Accumulation (Yearly) ---
-        st.markdown("### 📈 Yearly Accumulation")
-        history = pd.DataFrame()
-        for snap in latests:
-            snap_df = snap["data"].copy()
-            snap_df["timestamp"] = snap["timestamp"]
-            history = pd.concat([history, snap_df])
-
-        if not history.empty:
-            history["timestamp"] = pd.to_datetime(history["timestamp"])
-            yearly = history.groupby([pd.Grouper(key="timestamp", freq="Y"), "name"])["coins"].sum().reset_index()
-            fig2 = px.line(yearly, x="timestamp", y="coins", color="name", title="Yearly Accumulation")
-            st.plotly_chart(fig2, use_container_width=True)
-
-# --- Custom CSS ---
+# =============================
+# Heading
+# =============================
 st.markdown(
-    """
-    <style>
-    .stMetric {background: #f8f9fa; padding: 15px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);}
-    </style>
-    """,
-    unsafe_allow_html=True,
+    "<h2 style='text-align: center;'>📊 Public Companies Crypto Treasury Tracker (Demo)</h2>",
+    unsafe_allow_html=True
 )
+
+# =============================
+# Snapshot Timestamp (friendly)
+# =============================
+# Replace with your API snapshot timestamp
+snapshot_raw = "2025-08-31T12:33:03.015764Z"
+snapshot_dt = parser.isoparse(snapshot_raw)
+
+# Convert to relative / friendly date
+now = datetime.now(timezone.utc)
+delta = now - snapshot_dt
+
+if delta.days == 0:
+    if delta.seconds < 3600:
+        snapshot_display = f"{delta.seconds // 60} minutes ago"
+    else:
+        snapshot_display = f"{delta.seconds // 3600} hours ago"
+elif delta.days == 1:
+    snapshot_display = "yesterday"
+elif delta.days < 7:
+    snapshot_display = f"{delta.days} days ago"
+else:
+    snapshot_display = snapshot_dt.strftime("%d %b %Y")  # e.g. 31 Aug 2025
+
+st.markdown(
+    f"<p style='text-align: center; font-size:16px;'>Latest snapshot for <b>bitcoin</b>: {snapshot_display}</p>",
+    unsafe_allow_html=True
+)
+
+# =============================
+# KPIs
+# =============================
+total_holdings = df["total_holdings"].sum()
+total_value = df["total_current_value_usd"].sum()
+avg_holding = df["total_holdings"].mean()
+num_companies = df.shape[0]
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total BTC Held", f"{total_holdings:,.0f}")
+col2.metric("Total Value (USD)", f"${total_value:,.0f}")
+col3.metric("Avg BTC per Company", f"{avg_holding:,.0f}")
+col4.metric("Companies Tracked", f"{num_companies}")
+
+st.markdown("---")
+
+# =============================
+# Pie Chart
+# =============================
+btc_total_supply = 21000000
+company_holdings = total_holdings
+other_holdings = btc_total_supply - company_holdings
+
+pie_data = pd.DataFrame({
+    "holder": ["Public Companies", "Others"],
+    "holdings": [company_holdings, other_holdings]
+})
+
+fig_pie = px.pie(
+    pie_data,
+    names="holder",
+    values="holdings",
+    title="Share of Bitcoin Supply (Public Companies vs Others)",
+    hole=0.4,
+    color_discrete_sequence=px.colors.sequential.RdBu
+)
+st.plotly_chart(fig_pie, use_container_width=True)
+
+# =============================
+# Data Table
+# =============================
+st.subheader("Company Breakdown")
+st.dataframe(df, use_container_width=True)
